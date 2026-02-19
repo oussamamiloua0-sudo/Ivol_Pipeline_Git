@@ -1,0 +1,3 @@
+# one symbol per line
+AAPL
+SPY

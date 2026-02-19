@@ -1,0 +1,32 @@
+# Python / venv
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Environment / secrets
+.env
+
+# Logs & raw data
+logs/
+data/raw/
+
+# Local exports / dumps
+ivol_dump*.sql
+nearest_option_*.tsv
+nearest_option_*.txt
+nearest_option_*.xlsx
+.backfill_progress_*.json
+.progress_*.json
+
+# Local DB certs / keys
+*.crt
+*.pem
+*.key
+
+# IDE
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

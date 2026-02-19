@@ -18,6 +18,7 @@ nearest_option_*.txt
 nearest_option_*.xlsx
 .backfill_progress_*.json
 .progress_*.json
+.nearest_rawiv*.json
 
 # Local DB certs / keys
 *.crt
@@ -26,6 +27,9 @@ nearest_option_*.xlsx
 
 # IDE
 .idea/
+
+# Nested clone (ignore)
+Ivol_Pipeline_Git/
 
 # OS
 .DS_Store

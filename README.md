@@ -1,6 +1,11 @@
 
 # ivolatility-data-pipeline (Ivol_Pipeline_Git)
 
+## Setup
+
+1) Copy `.env.example` -> `.env`
+2) Fill in `IVOL_API_KEY` and `DB_URL`
+
 ## Research View: `v_option_eod_research`
 
 `v_option_eod_research` provides a research-ready, contract-level options view joined to the underlying symbol.

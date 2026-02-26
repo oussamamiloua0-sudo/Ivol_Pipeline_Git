@@ -1,108 +1,53 @@
--- =========================
--- Dimensions
--- =========================
+-- =============================================================================
+-- ivolatility-data-pipeline  —  canonical MySQL schema (DO Managed MySQL)
+-- Matches the live DB exactly.  Safe to re-run (IF NOT EXISTS / IF NOT EXISTS KEY).
+-- =============================================================================
 
 CREATE TABLE IF NOT EXISTS dim_underlying (
-    underlying_id BIGSERIAL PRIMARY KEY,
-    symbol        TEXT NOT NULL UNIQUE,
-    exchange      TEXT NULL,
-    currency      TEXT NULL,
-    active_from   DATE NULL,
-    active_to     DATE NULL,
-    is_delisted   BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+    underlying_id  BIGINT        NOT NULL AUTO_INCREMENT,
+    symbol         VARCHAR(32)   NOT NULL,
+    created_at     TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (underlying_id),
+    UNIQUE KEY uq_underlying_symbol (symbol)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 
 CREATE TABLE IF NOT EXISTS dim_option_contract (
-    option_id        BIGSERIAL PRIMARY KEY,
-    underlying_id    BIGINT NOT NULL REFERENCES dim_underlying(underlying_id),
-    expiration_date  DATE NOT NULL,
-    strike           NUMERIC(14,4) NOT NULL,
-    call_put         CHAR(1) NOT NULL CHECK (call_put IN ('C','P')),
-    style            CHAR(1) NULL,              -- optional (A=American, E=European) if provided
-    multiplier       INTEGER NULL,              -- optional, often 100
-    option_symbol    TEXT NULL,                 -- OCC / vendor symbol if available
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (underlying_id, expiration_date, strike, call_put, style)
-);
+    option_id       BIGINT         NOT NULL,
+    underlying_id   BIGINT         NOT NULL,
+    expiration_date DATE           NOT NULL,
+    strike          DECIMAL(12,4)  NOT NULL,
+    call_put        CHAR(1)        NOT NULL,   -- 'C' or 'P'
+    style           CHAR(1)        NULL,       -- 'E' European | 'A' American
+    option_symbol   VARCHAR(64)    NOT NULL,
+    created_at      TIMESTAMP      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (option_id),
+    KEY ix_contract_underlying_exp (underlying_id, expiration_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE INDEX IF NOT EXISTS ix_option_contract_underlying_exp
-    ON dim_option_contract (underlying_id, expiration_date);
-
--- =========================
--- Facts: Underlying EOD
--- =========================
-
-CREATE TABLE IF NOT EXISTS fact_underlying_eod (
-    trade_date     DATE NOT NULL,
-    underlying_id  BIGINT NOT NULL REFERENCES dim_underlying(underlying_id),
-    open           NUMERIC(18,6) NULL,
-    high           NUMERIC(18,6) NULL,
-    low            NUMERIC(18,6) NULL,
-    close          NUMERIC(18,6) NULL,
-    adj_close      NUMERIC(18,6) NULL,
-    volume         BIGINT NULL,
-    ingested_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (trade_date, underlying_id)
-);
-
-CREATE INDEX IF NOT EXISTS ix_underlying_eod_underlying_date
-    ON fact_underlying_eod (underlying_id, trade_date);
-
--- =========================
--- Facts: Option EOD (contract-level)
--- =========================
 
 CREATE TABLE IF NOT EXISTS fact_option_eod (
-    trade_date      DATE NOT NULL,
-    option_id       BIGINT NOT NULL REFERENCES dim_option_contract(option_id),
+    option_id      BIGINT          NOT NULL,
+    trade_date     DATE            NOT NULL,
 
-    bid             NUMERIC(18,6) NULL,
-    ask             NUMERIC(18,6) NULL,
-    mid             NUMERIC(18,6) NULL,
-    close           NUMERIC(18,6) NULL,         -- or settlement if that’s what vendor provides
-    volume          BIGINT NULL,
-    open_interest   BIGINT NULL,
+    bid            DECIMAL(12,6)   NULL,
+    ask            DECIMAL(12,6)   NULL,
+    price          DECIMAL(12,6)   NULL,
 
-    iv              DOUBLE PRECISION NULL,
-    delta           DOUBLE PRECISION NULL,
-    gamma           DOUBLE PRECISION NULL,
-    theta           DOUBLE PRECISION NULL,
-    vega            DOUBLE PRECISION NULL,
-    rho             DOUBLE PRECISION NULL,
+    iv             DOUBLE          NULL,
+    preiv          DOUBLE          NULL,
+    delta          DOUBLE          NULL,
+    gamma          DOUBLE          NULL,
+    vega           DOUBLE          NULL,
+    theta          DOUBLE          NULL,
+    rho            DOUBLE          NULL,
 
-    underlying_close NUMERIC(18,6) NULL,        -- optional denormalized snapshot for speed
-    src_timestamp   TIMESTAMPTZ NULL,           -- vendor timestamp if present
+    volume         BIGINT          NULL,
+    open_interest  BIGINT          NULL,
+    is_settlement  TINYINT(1)      NULL,
 
-    ingested_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (trade_date, option_id)
-);
+    created_at     TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-CREATE INDEX IF NOT EXISTS ix_option_eod_option_date
-    ON fact_option_eod (option_id, trade_date);
-
-CREATE INDEX IF NOT EXISTS ix_option_eod_date
-    ON fact_option_eod (trade_date);
-
--- =========================
--- Optional: Volatility context (can be empty at first)
--- =========================
-
-CREATE TABLE IF NOT EXISTS fact_vol_metrics (
-    trade_date     DATE NOT NULL,
-    underlying_id  BIGINT NOT NULL REFERENCES dim_underlying(underlying_id),
-
-    rv_10          DOUBLE PRECISION NULL,
-    rv_20          DOUBLE PRECISION NULL,
-    rv_60          DOUBLE PRECISION NULL,
-
-    atm_iv_30      DOUBLE PRECISION NULL,
-    atm_iv_60      DOUBLE PRECISION NULL,
-    atm_iv_90      DOUBLE PRECISION NULL,
-
-    ingested_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (trade_date, underlying_id)
-);
-
-CREATE INDEX IF NOT EXISTS ix_vol_metrics_underlying_date
-    ON fact_vol_metrics (underlying_id, trade_date);
+    PRIMARY KEY (option_id, trade_date),
+    KEY ix_fact_option_eod_trade_date (trade_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

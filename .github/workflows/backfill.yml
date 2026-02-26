@@ -1,0 +1,164 @@
+name: iVol Backfill
+
+# Triggered manually from the GitHub Actions tab.
+# Fill in the inputs, click "Run workflow", and the backfill starts on a
+# GitHub-hosted runner (~4 GB RAM, 2 vCPU, free Ubuntu).
+#
+# Checkpoint (.backfill_SYMBOL_start_end.json) is uploaded as an artifact
+# after EVERY run (success or failure), so the next run resumes automatically.
+#
+# Required repository secrets (Settings → Secrets → Actions):
+#   DB_URL          — full SQLAlchemy URL, e.g. mysql+pymysql://user:pass@host:25060/db
+#   IVOL_API_KEYS   — comma-separated API keys, e.g. key1,key2,key3,key4,key5
+
+on:
+  workflow_dispatch:
+    inputs:
+      symbol:
+        description: 'Symbol (e.g. SPY, SPX, AAPL)'
+        required: true
+        default: 'SPY'
+      start:
+        description: 'Start date (YYYY-MM-DD)'
+        required: true
+        default: '2025-01-01'
+      end:
+        description: 'End date (YYYY-MM-DD)'
+        required: true
+        default: '2025-03-31'
+      max_dte:
+        description: 'Max DTE (days to expiration)'
+        required: true
+        default: '60'
+      strike_low:
+        description: 'Strike low band (fraction: 0.9 = 90%)'
+        required: true
+        default: '0.9'
+      strike_high:
+        description: 'Strike high band (fraction: 1.1 = 110%)'
+        required: true
+        default: '1.1'
+      monthlies_only:
+        description: 'Monthlies-only filter (3rd Friday rule)'
+        required: true
+        default: 'true'
+        type: boolean
+      trading_days_only:
+        description: 'NYSE calendar — skip weekends + holidays'
+        required: true
+        default: 'true'
+        type: boolean
+      per_key_rps:
+        description: 'Per-key RPS (0.3 is safe for 5 keys)'
+        required: true
+        default: '0.3'
+      max_workers:
+        description: 'Max parallel workers'
+        required: true
+        default: '5'
+      retry_failed:
+        description: 'Retry only previously failed dates'
+        required: false
+        default: 'false'
+        type: boolean
+
+jobs:
+  backfill:
+    runs-on: ubuntu-22.04
+    # 355 min = just under the 6-hour GitHub Actions limit.
+    # SPY Q1 (19,934 rawiv calls) takes ~3.7h lower bound.
+    timeout-minutes: 355
+
+    steps:
+      # ------------------------------------------------------------------
+      # 1. Checkout
+      # ------------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ------------------------------------------------------------------
+      # 2. Python
+      # ------------------------------------------------------------------
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # ------------------------------------------------------------------
+      # 3. Write .env from secrets (never stored in repo)
+      # ------------------------------------------------------------------
+      - name: Write .env
+        run: |
+          echo "DB_URL=${{ secrets.DB_URL }}"         >  .env
+          echo "IVOL_API_KEYS=${{ secrets.IVOL_API_KEYS }}" >> .env
+          echo "DB_SSL_MODE=REQUIRED"                 >> .env
+
+      # ------------------------------------------------------------------
+      # 4. Create logs dir
+      # ------------------------------------------------------------------
+      - name: Create logs directory
+        run: mkdir -p logs
+
+      # ------------------------------------------------------------------
+      # 5. Download checkpoint (allows resume after interrupted run)
+      #    First run: no artifact exists — continue-on-error swallows it.
+      # ------------------------------------------------------------------
+      - name: Download checkpoint (resume support)
+        uses: actions/download-artifact@v4
+        with:
+          name: checkpoint-${{ github.event.inputs.symbol }}-${{ github.event.inputs.start }}-${{ github.event.inputs.end }}
+          path: .
+        continue-on-error: true
+
+      # ------------------------------------------------------------------
+      # 6. Run backfill
+      # ------------------------------------------------------------------
+      - name: Run backfill
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          EXTRA=""
+          [ "${{ github.event.inputs.monthlies_only }}"    = "true" ] && EXTRA="$EXTRA --monthlies-only"
+          [ "${{ github.event.inputs.trading_days_only }}" = "true" ] && EXTRA="$EXTRA --trading-days-only"
+          [ "${{ github.event.inputs.retry_failed }}"      = "true" ] && EXTRA="$EXTRA --retry-failed"
+
+          python scripts/backfill_range.py \
+            --symbol      "${{ github.event.inputs.symbol }}" \
+            --start       "${{ github.event.inputs.start }}" \
+            --end         "${{ github.event.inputs.end }}" \
+            --max-dte     "${{ github.event.inputs.max_dte }}" \
+            --strike-low  "${{ github.event.inputs.strike_low }}" \
+            --strike-high "${{ github.event.inputs.strike_high }}" \
+            --per-key-rps "${{ github.event.inputs.per_key_rps }}" \
+            --max-workers "${{ github.event.inputs.max_workers }}" \
+            --log-file    "logs/backfill-${{ github.event.inputs.symbol }}-${{ github.event.inputs.start }}-${{ github.event.inputs.end }}.log" \
+            $EXTRA
+
+      # ------------------------------------------------------------------
+      # 7. Upload checkpoint — always (even on failure/timeout)
+      #    Same artifact name = overwrites the previous checkpoint, so the
+      #    next manual trigger automatically resumes from last completed date.
+      # ------------------------------------------------------------------
+      - name: Upload checkpoint
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkpoint-${{ github.event.inputs.symbol }}-${{ github.event.inputs.start }}-${{ github.event.inputs.end }}
+          path: .backfill_${{ github.event.inputs.symbol }}_${{ github.event.inputs.start }}_${{ github.event.inputs.end }}.json
+          retention-days: 90
+          overwrite: true
+
+      # ------------------------------------------------------------------
+      # 8. Upload log — always, tagged with run number so history is kept
+      # ------------------------------------------------------------------
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: log-${{ github.event.inputs.symbol }}-${{ github.event.inputs.start }}-${{ github.event.inputs.end }}-run${{ github.run_number }}
+          path: logs/backfill-${{ github.event.inputs.symbol }}-${{ github.event.inputs.start }}-${{ github.event.inputs.end }}.log
+          retention-days: 30

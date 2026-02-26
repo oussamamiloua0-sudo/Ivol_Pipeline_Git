@@ -17,5 +17,21 @@
   "files.exclude": {
     "**/__pycache__": true,
     "**/*.pyc": true
-  }
+  },
+  "sqltools.connections": [
+    {
+      "mysqlOptions": {
+        "authProtocol": "default",
+        "enableSsl": "Disabled"
+      },
+      "ssh": "Disabled",
+      "previewLimit": 50,
+      "server": "db-mysql-nyc3-06366-do-user-33453591-0.e.db.ondigitalocean.com",
+      "port": 25060,
+      "driver": "MySQL",
+      "username": "doadmin",
+      "database": "defaultdb",
+      "name": "doadmin"
+    }
+  ]
 }

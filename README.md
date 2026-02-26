@@ -1,20 +1,247 @@
+# ivolatility-data-pipeline
 
-# ivolatility-data-pipeline (Ivol_Pipeline_Git)
+Full-chain EOD equity options ingest pipeline using the iVolatility REST API.
+
+## Purpose
+
+Build a complete EOD option chain for a given underlying, date, and expiration/strike
+filter — then store each contract's raw implied-volatility metrics in MySQL.
+
+**Pipeline flow:**
+```
+GET /equities/eod/option-series-on-date     (discover all optionIds for C and P)
+        |
+        v  for each optionId
+GET /equities/eod/single-stock-option-raw-iv
+        |
+        v
+MySQL:  dim_option_contract  +  fact_option_eod
+```
 
 ## Setup
 
-1) Copy `.env.example` -> `.env`
-2) Fill in `IVOL_API_KEY` and `DB_URL`
+```bash
+cp .env.example .env
+# fill in IVOL_API_KEY and DB_URL
+```
 
-## Research View: `v_option_eod_research`
+Required `.env` keys:
 
-`v_option_eod_research` provides a research-ready, contract-level options view joined to the underlying symbol.
+| Key | Description |
+|---|---|
+| `IVOL_API_KEY` | iVolatility REST API key |
+| `DB_URL` | SQLAlchemy MySQL URL (`mysql+pymysql://user:pass@host:port/db`) |
+| `DB_SSL_CA` | Path to DO CA certificate (optional, recommended) |
+| `IVOL_BASE_URL` | Override API base URL (optional; default: `https://restapi.ivolatility.com`) |
 
-Column notes:
-- `close_price` is mapped from `fact_option_eod.price` (vendor-provided close/mark field).
-- `mid_price` is computed as `(bid + ask) / 2` when both sides are present.
+## Core Scripts
 
-## Apply Migration (PowerShell)
+### Full-chain ingest for one date
+
+```bash
+python src/jobs/load_full_chain_for_date.py \
+    --symbol SPX \
+    --date 2022-02-16 \
+    --expFrom 2022-10-21 \
+    --expTo 2022-10-21 \
+    --strikeFrom 200 \
+    --strikeTo 750 \
+    --region USA \
+    --debug --head 10
+```
+
+| Arg | Required | Description |
+|---|---|---|
+| `--symbol` | yes | Underlying ticker (e.g. SPX, AAPL) |
+| `--date` | yes | Trade date (YYYY-MM-DD) |
+| `--expFrom` | yes | Expiration filter start (YYYY-MM-DD) |
+| `--expTo` | yes | Expiration filter end (YYYY-MM-DD) |
+| `--strikeFrom` | yes | Strike lower bound |
+| `--strikeTo` | yes | Strike upper bound |
+| `--region` | no | Default: USA |
+| `--sleep-ms N` | no | Throttle between raw-iv calls in ms (default 0) |
+| `--head N` | no | In debug mode, print first N contracts (default 3; 0 = all) |
+| `--debug` | no | Verbose output + contract/row previews |
+
+### AAPL example
+
+```bash
+python src/jobs/load_full_chain_for_date.py \
+    --symbol AAPL \
+    --date 2022-03-15 \
+    --expFrom 2022-06-17 \
+    --expTo 2022-06-17 \
+    --strikeFrom 100 \
+    --strikeTo 200 \
+    --region USA \
+    --debug --head 10
+```
+
+### Inspect a single contract (debug / spot-check)
+
+```bash
+# By OCC symbol
+python scripts/rawiv_single_contract.py \
+    --symbol "SPX   251219C04100000" \
+    --from 2022-09-29 --to 2022-10-30 \
+    --region USA --head 10
+
+# By iVol optionId
+python scripts/rawiv_single_contract.py \
+    --optionId 116950315 \
+    --from 2022-02-16 --to 2022-02-16 \
+    --region USA --head 5
+
+# Save full JSON response to file
+python scripts/rawiv_single_contract.py \
+    --symbol "SPX   251219C04100000" \
+    --from 2022-09-29 --to 2022-10-30 \
+    --out response.json
+```
+
+## DB Schema
+
+| Table | Role |
+|---|---|
+| `dim_underlying` | One row per ticker (auto-created on first ingest) |
+| `dim_option_contract` | One row per option contract (PK: `option_id`) |
+| `fact_option_eod` | EOD metrics per contract per date (PK: `option_id`, `trade_date`) |
+
+Schema migrations are in `sql/`.  Reference schema: `src/db/schema.sql`.
+
+## DB Connectivity (DigitalOcean Managed MySQL)
+
+The engine in `src/db/engine.py` enforces SSL and runs a TCP preflight check on startup.
+
+If you see `TCP connect failed`: your current public IP is not in DO Trusted Sources.
+Add it at: DigitalOcean > Databases > your cluster > Settings > Trusted Sources.
+
+```bash
+python scripts/db_ssl_ping.py   # quick connectivity check
+```
+
+## Project Structure
+
+```
+src/
+  db/
+    engine.py                       # SSL-aware SQLAlchemy engine (shared)
+    init_db.py                      # Schema initialiser
+    schema.sql                      # Reference schema
+  jobs/
+    load_full_chain_for_date.py     # Main ingest job
+  ivol/
+    __init__.py
+
+scripts/
+  rawiv_single_contract.py          # Single-contract raw-IV debug/spot-check
+  db_ssl_ping.py                    # DB connectivity check
+  health_check.ps1                  # Health check (PowerShell)
+  show_env.py                       # Print resolved env vars (no secrets)
+  test_full_chain_aapl.py           # AAPL endpoint smoke test
+  recheck_full_chain_access.py      # Check accessible endpoints
+
+sql/                                # Schema migrations (apply manually)
+  002_options_research_view_and_indexes.sql
+  003_underlying_and_vol_tables.sql
+  004_joined_research_view.sql
+  005_team_readonly_user.sql
+
+archive/nearest_selection_legacy/   # Old nearest-selection pipeline (inactive)
+```
+
+## Using multiple API keys + tuning performance
+
+### Why multiple keys?
+
+Each iVol API key has its own per-key request budget. Adding legitimately
+issued keys lets you distribute raw-iv fetches across keys in parallel
+threads, reducing per-day wall time roughly proportionally to the number of
+keys (the bottleneck is network I/O, not CPU).
+
+| Setup | ~time for 650 contracts | effective RPS |
+|---|---|---|
+| 1 key @ 2 RPS | ~325 s (~5 min) | 2 |
+| 5 keys @ 2 RPS each | ~65 s (~1 min) | 10 |
+
+Rate limits are respected per-key via a token-bucket inside `KeyPool`.
+Adaptive backoff automatically widens the per-key gap when HTTP 429
+responses are detected.
+
+### Configuration
+
+In `.env`, set a comma-separated list:
+
+```
+IVOL_API_KEYS=key1,key2,key3,key4,key5
+```
+
+`IVOL_API_KEY` (single key) is still supported and is merged into the pool
+automatically (deduplication is applied). Set one or the other or both.
+
+### New CLI flags
+
+Both `load_full_chain_for_date.py` and `backfill_full_chain.py` accept:
+
+| Flag | Default | Description |
+|---|---|---|
+| `--max-workers N` | number of keys | Parallel raw-iv fetcher threads |
+| `--per-key-rps F` | `2.0` | Max requests/second per key |
+
+### Run a single date with all keys
+
+```bash
+python src/jobs/load_full_chain_for_date.py \
+    --symbol AAPL --date 2022-01-03 \
+    --expFrom 2022-01-03 --expTo 2022-07-01 \
+    --strikeFrom 127 --strikeTo 237 \
+    --region USA \
+    --per-key-rps 2.0 --debug
+```
+
+Expected log output:
+```
+KeyPool ready: 5 key(s), per_key_rps=2.0  [***6X, ***xz, ***36, ***4n, ***A0]
+[2022-01-03] Discovered 644 contracts (calls=322 puts=322)  keys=5 workers=5
+[2022-01-03] Fetched 644 raw-iv results in 65.2s  avg=9.9 req/s
+[2022-01-03] OK  loaded=644  elapsed=67.1s  rps=9.9
+```
+
+### Run the 1-year AAPL backfill (resumable)
+
+```bash
+python src/jobs/backfill_full_chain.py \
+    --symbol AAPL --start 2022-01-01 --end 2022-12-31 \
+    --max-dte 180 --strike-low 0.70 --strike-high 1.30 \
+    --per-key-rps 2.0 --region USA
+```
+
+Progress is checkpointed to `.backfill_AAPL_2022-01-01_2022-12-31.json`.
+If interrupted, re-run the same command and it will resume from the last
+completed date.
+
+### Verify no secret leakage
+
+```bash
+# Keys should appear only as ***XXXX (last 4 chars) in logs:
+grep -i "apikey\|api_key\|key=" logs/backfill_*.log || echo "Clean"
+```
+
+### Verify DB rows
+
+```sql
+SELECT trade_date, COUNT(*) AS contracts
+FROM fact_option_eod f
+JOIN dim_option_contract c ON c.option_id = f.option_id
+JOIN dim_underlying u ON u.underlying_id = c.underlying_id
+WHERE u.symbol = 'AAPL'
+GROUP BY trade_date
+ORDER BY trade_date;
+```
+
+---
+
+## Apply a SQL migration (PowerShell)
 
 ```powershell
 Get-Content .\sql\002_options_research_view_and_indexes.sql |
@@ -23,116 +250,13 @@ Get-Content .\sql\002_options_research_view_and_indexes.sql |
     -P 25060 -u ivol_app -p --ssl-mode=REQUIRED ivol
 ```
 
-## Verify
+## Team read-only access
 
-```sql
-SHOW INDEX FROM `fact_option_eod`;
-SHOW INDEX FROM `dim_option_contract`;
-SHOW CREATE VIEW `v_option_eod_research`\G
-SELECT * FROM `v_option_eod_research` LIMIT 5;
-```
-
-## Underlying & Volatility Tables
-
-- `fact_underlying_eod`: daily underlying OHLCV and optional `adj_close` (may be NULL if not provided).
-- `fact_vol_metrics`: daily IVX and historical volatility (HV) series with raw payloads stored in JSON.
-
-Endpoints:
-- `/equities/eod/stock-prices` ? `fact_underlying_eod` (param: `date`)
-- `/equities/eod/ivx` ? `fact_vol_metrics.ivx` + `fact_vol_metrics.ivx_raw` (param: `date`)
-- `/equities/eod/hv` ? `fact_vol_metrics.hv_*` + `fact_vol_metrics.hv_raw` (param: `date`)
-  - If HV returns a single value, it is mapped to `hv_30`.
-
-## Apply Migration (PowerShell)
-
-```powershell
-Get-Content .\sql\003_underlying_and_vol_tables.sql |
-  & "C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe" `
-    -h db-mysql-nyc3-06366-do-user-33453591-0.e.db.ondigitalocean.com `
-    -P 25060 -u ivol_app -p --ssl-mode=REQUIRED ivol
-```
-
-## Verify
-
-```sql
-SHOW CREATE TABLE `fact_underlying_eod`\G;
-SHOW CREATE TABLE `fact_vol_metrics`\G;
-SHOW INDEX FROM `fact_underlying_eod`;
-SHOW INDEX FROM `fact_vol_metrics`;
-```
-
-## Joined Research View (Options + Underlying + Volatility)
-
-`v_research_option_underlying_vol` joins options with underlying OHLCV and IVX/HV metrics on `underlying_id` + `trade_date`.
-Underlying bid/ask may be NULL depending on the endpoint.
-
-Example query:
-```sql
-SELECT trade_date, underlying_symbol, expiration_date, strike, option_type, ivx, hv30
-FROM `v_research_option_underlying_vol`
-WHERE underlying_symbol='TQQQ' AND trade_date='2022-03-15'
-LIMIT 10;
-```
-
-TSV export (stable column order):
-```powershell
-& "C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe" `
-  -h db-mysql-nyc3-06366-do-user-33453591-0.e.db.ondigitalocean.com `
-  -P 25060 -u ivol_app -p --ssl-mode=REQUIRED --batch --raw ivol `
-  -e "SELECT trade_date, underlying_symbol, expiration_date, strike, option_type, bid, ask, mid_price, close_price, volume, open_interest, iv, preiv, delta, gamma, theta, vega, rho, is_settlement, option_id, option_symbol, underlying_open, underlying_high, underlying_low, underlying_close, underlying_volume, ivx, hv10, hv20, hv30, hv60, hv90 FROM v_research_option_underlying_vol WHERE underlying_symbol='TQQQ' AND trade_date='2022-03-15';" |
-  Set-Content -Encoding ascii .\research_export.tsv
-```
-
-## Apply Migration (PowerShell)
-
-```powershell
-Get-Content .\sql\004_joined_research_view.sql |
-  & "C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe" `
-    -h db-mysql-nyc3-06366-do-user-33453591-0.e.db.ondigitalocean.com `
-    -P 25060 -u ivol_app -p --ssl-mode=REQUIRED ivol
-```
-
-## Verify
-
-```sql
-SHOW CREATE VIEW `v_research_option_underlying_vol`\G;
-SELECT * FROM `v_research_option_underlying_vol` WHERE underlying_symbol='TQQQ' AND trade_date='2022-03-15' LIMIT 5;
-```
-
-## Team Access (Read-only)
-
-SQL (update the password before running):
 ```sql
 CREATE USER IF NOT EXISTS 'sqilled_support'@'%' IDENTIFIED BY 'CHANGE_ME_STRONG_PASSWORD';
 GRANT SELECT ON `ivol`.* TO 'sqilled_support'@'%';
 FLUSH PRIVILEGES;
 ```
 
-Apply (PowerShell):
-```powershell
-Get-Content .\sql\005_team_readonly_user.sql |
-  & "C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe" `
-    -h db-mysql-nyc3-06366-do-user-33453591-0.e.db.ondigitalocean.com `
-    -P 25060 -u ivol_app -p --ssl-mode=REQUIRED ivol
-```
-
-Verify:
-```sql
-SHOW GRANTS FOR 'sqilled_support'@'%';
-SELECT COUNT(*) FROM `v_research_option_underlying_vol`;
-```
-
-## Daily Ops / Scheduling
-
-Manual run (PowerShell):
-```powershell
-.\scripts\run_daily_ingest.ps1 -Symbols TQQQ -CallPut P -Dte 100 -Deltas -0.17
-```
-
-Task Scheduler:
-- Program/script: `powershell.exe`
-- Arguments: `-NoProfile -ExecutionPolicy Bypass -File "C:\Users\Acer\PycharmProjects\ivolatility-data-pipeline\scripts\run_daily_ingest.ps1"`
-- Start in: `C:\Users\Acer\PycharmProjects\ivolatility-data-pipeline`
-
-Troubleshooting:
-- If DB connections fail, check DigitalOcean Trusted Sources for your current public IP (it may change).
+Troubleshooting: if DB connections fail, check DigitalOcean Trusted Sources for your
+current public IP (dynamic IPs change on reconnect).

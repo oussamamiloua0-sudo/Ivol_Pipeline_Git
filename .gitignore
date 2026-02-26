@@ -7,6 +7,12 @@ __pycache__/
 # Environment / secrets
 .env
 
+# Claude Code memory (contains credentials)
+.claude/
+
+# Droplet setup script (contains real credentials)
+scripts/droplet_setup.py
+
 # Logs & raw data
 logs/
 data/raw/
@@ -16,6 +22,11 @@ ivol_dump*.sql
 nearest_option_*.tsv
 nearest_option_*.txt
 nearest_option_*.xlsx
+*.xlsx
+*.tsv
+
+# Checkpoint / progress files
+.backfill_*.json
 .backfill_progress_*.json
 .progress_*.json
 .nearest_rawiv*.json

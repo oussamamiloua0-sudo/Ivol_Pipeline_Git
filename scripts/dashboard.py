@@ -132,11 +132,10 @@ with st.sidebar:
     import datetime
     db_min_date = datetime.date.fromisoformat(db_min)
     db_max_date = datetime.date.fromisoformat(db_max)
-    default_start = max(db_min_date, db_max_date - datetime.timedelta(days=30))
 
     date_range = st.date_input(
         "Date range",
-        value=(default_start, db_max_date),
+        value=(db_min_date, db_max_date),
         min_value=db_min_date,
         max_value=db_max_date,
         format="YYYY-MM-DD",

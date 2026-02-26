@@ -92,10 +92,13 @@ jobs:
       # 3. Write .env from secrets (never stored in repo)
       # ------------------------------------------------------------------
       - name: Write .env
+        env:
+          DB_URL: ${{ secrets.DB_URL }}
+          IVOL_API_KEYS: ${{ secrets.IVOL_API_KEYS }}
         run: |
-          echo "DB_URL=${{ secrets.DB_URL }}"         >  .env
-          echo "IVOL_API_KEYS=${{ secrets.IVOL_API_KEYS }}" >> .env
-          echo "DB_SSL_MODE=REQUIRED"                 >> .env
+          printf 'DB_URL=%s\n'        "$DB_URL"        >  .env
+          printf 'IVOL_API_KEYS=%s\n' "$IVOL_API_KEYS" >> .env
+          echo   "DB_SSL_MODE=REQUIRED"                >> .env
 
       # ------------------------------------------------------------------
       # 4. Create logs dir

@@ -101,6 +101,26 @@ jobs:
           echo   "DB_SSL_MODE=REQUIRED"                >> .env
 
       # ------------------------------------------------------------------
+      # 3b. Debug: confirm DB_URL host (password masked)
+      # ------------------------------------------------------------------
+      - name: Debug DB_URL (host only)
+        env:
+          DB_URL: ${{ secrets.DB_URL }}
+        run: |
+          python3 -c "
+          import re, os
+          url = os.environ.get('DB_URL','')
+          print('URL length:', len(url))
+          m = re.search(r'@([^/]+)/', url)
+          print('Host:', m.group(1) if m else 'NOT FOUND')
+          m2 = re.search(r'://([^:]+):', url)
+          print('User:', m2.group(1) if m2 else 'NOT FOUND')
+          pw = re.search(r'://[^:]+:([^@]+)@', url)
+          p = pw.group(1) if pw else ''
+          print('Pass length:', len(p), '| last4:', p[-4:] if len(p)>=4 else '???')
+          "
+
+      # ------------------------------------------------------------------
       # 4. Create logs dir
       # ------------------------------------------------------------------
       - name: Create logs directory

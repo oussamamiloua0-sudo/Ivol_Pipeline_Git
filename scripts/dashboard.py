@@ -130,21 +130,31 @@ with st.sidebar:
         st.stop()
 
     import datetime
-    default_end   = datetime.date.fromisoformat(db_max)
-    default_start = max(
-        datetime.date.fromisoformat(db_min),
-        default_end - datetime.timedelta(days=30),
+    db_min_date = datetime.date.fromisoformat(db_min)
+    db_max_date = datetime.date.fromisoformat(db_max)
+    default_start = max(db_min_date, db_max_date - datetime.timedelta(days=30))
+
+    date_range = st.date_input(
+        "Date range",
+        value=(default_start, db_max_date),
+        min_value=db_min_date,
+        max_value=db_max_date,
+        format="YYYY-MM-DD",
     )
 
-    col1, col2 = st.columns(2)
-    with col1:
-        start_date = st.date_input("From", value=default_start,
-                                   min_value=datetime.date.fromisoformat(db_min),
-                                   max_value=default_end)
-    with col2:
-        end_date = st.date_input("To", value=default_end,
-                                  min_value=datetime.date.fromisoformat(db_min),
-                                  max_value=default_end)
+    # Handle partial selection (user picked only one date)
+    if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
+        start_date, end_date = date_range
+    elif isinstance(date_range, (list, tuple)) and len(date_range) == 1:
+        start_date = end_date = date_range[0]
+        st.info("Pick an end date to complete the range.")
+        st.stop()
+    else:
+        start_date = end_date = date_range
+
+    if start_date > end_date:
+        st.error("Start date must be before end date.")
+        st.stop()
 
     start_str = str(start_date)
     end_str   = str(end_date)

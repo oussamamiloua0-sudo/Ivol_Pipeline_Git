@@ -1,0 +1,210 @@
+name: iVol Backfill SPY 2025 Q2-Q4 Chain
+
+# Auto-starts when the main "iVol Backfill" workflow completes (Q1 done).
+# Also triggerable manually from the Actions tab.
+#
+# Runs Q2 → Q3 → Q4 sequentially so the API rate limit is never doubled.
+# Each quarter has its own checkpoint artifact for resume support.
+
+on:
+  workflow_run:
+    workflows: ["iVol Backfill"]
+    types: [completed]
+  workflow_dispatch:
+
+jobs:
+  # --------------------------------------------------------------------
+  # Q2: 2025-04-01 → 2025-06-30
+  # --------------------------------------------------------------------
+  q2:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 355
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - run: pip install -r requirements.txt
+
+      - name: Write .env
+        env:
+          DB_URL: ${{ secrets.DB_URL }}
+          IVOL_API_KEYS: ${{ secrets.IVOL_API_KEYS }}
+        run: |
+          printf 'DB_URL=%s\n'        "$DB_URL"        >  .env
+          printf 'IVOL_API_KEYS=%s\n' "$IVOL_API_KEYS" >> .env
+          echo   "DB_SSL_MODE=REQUIRED"                >> .env
+
+      - run: mkdir -p logs
+
+      - name: Download checkpoint Q2
+        uses: actions/download-artifact@v4
+        with:
+          name: checkpoint-SPY-2025-04-01-2025-06-30
+          path: .
+        continue-on-error: true
+
+      - name: Run backfill Q2
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          python scripts/backfill_range.py \
+            --symbol SPY --start 2025-04-01 --end 2025-06-30 \
+            --max-dte 60 --strike-low 0.9 --strike-high 1.1 \
+            --per-key-rps 0.3 --max-workers 5 \
+            --monthlies-only --trading-days-only \
+            --log-file logs/backfill-SPY-2025-04-01-2025-06-30.log
+
+      - name: Upload checkpoint Q2
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkpoint-SPY-2025-04-01-2025-06-30
+          path: .backfill_SPY_2025-04-01_2025-06-30.json
+          retention-days: 90
+          overwrite: true
+
+      - name: Upload log Q2
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: log-SPY-2025-04-01-2025-06-30-run${{ github.run_number }}
+          path: logs/backfill-SPY-2025-04-01-2025-06-30.log
+          retention-days: 30
+
+  # --------------------------------------------------------------------
+  # Q3: 2025-07-01 → 2025-09-30  (starts only after Q2 finishes)
+  # --------------------------------------------------------------------
+  q3:
+    needs: q2
+    runs-on: ubuntu-22.04
+    timeout-minutes: 355
+    if: always() && needs.q2.result != 'cancelled'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - run: pip install -r requirements.txt
+
+      - name: Write .env
+        env:
+          DB_URL: ${{ secrets.DB_URL }}
+          IVOL_API_KEYS: ${{ secrets.IVOL_API_KEYS }}
+        run: |
+          printf 'DB_URL=%s\n'        "$DB_URL"        >  .env
+          printf 'IVOL_API_KEYS=%s\n' "$IVOL_API_KEYS" >> .env
+          echo   "DB_SSL_MODE=REQUIRED"                >> .env
+
+      - run: mkdir -p logs
+
+      - name: Download checkpoint Q3
+        uses: actions/download-artifact@v4
+        with:
+          name: checkpoint-SPY-2025-07-01-2025-09-30
+          path: .
+        continue-on-error: true
+
+      - name: Run backfill Q3
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          python scripts/backfill_range.py \
+            --symbol SPY --start 2025-07-01 --end 2025-09-30 \
+            --max-dte 60 --strike-low 0.9 --strike-high 1.1 \
+            --per-key-rps 0.3 --max-workers 5 \
+            --monthlies-only --trading-days-only \
+            --log-file logs/backfill-SPY-2025-07-01-2025-09-30.log
+
+      - name: Upload checkpoint Q3
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkpoint-SPY-2025-07-01-2025-09-30
+          path: .backfill_SPY_2025-07-01_2025-09-30.json
+          retention-days: 90
+          overwrite: true
+
+      - name: Upload log Q3
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: log-SPY-2025-07-01-2025-09-30-run${{ github.run_number }}
+          path: logs/backfill-SPY-2025-07-01-2025-09-30.log
+          retention-days: 30
+
+  # --------------------------------------------------------------------
+  # Q4: 2025-10-01 → 2025-12-31  (starts only after Q3 finishes)
+  # --------------------------------------------------------------------
+  q4:
+    needs: q3
+    runs-on: ubuntu-22.04
+    timeout-minutes: 355
+    if: always() && needs.q3.result != 'cancelled'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - run: pip install -r requirements.txt
+
+      - name: Write .env
+        env:
+          DB_URL: ${{ secrets.DB_URL }}
+          IVOL_API_KEYS: ${{ secrets.IVOL_API_KEYS }}
+        run: |
+          printf 'DB_URL=%s\n'        "$DB_URL"        >  .env
+          printf 'IVOL_API_KEYS=%s\n' "$IVOL_API_KEYS" >> .env
+          echo   "DB_SSL_MODE=REQUIRED"                >> .env
+
+      - run: mkdir -p logs
+
+      - name: Download checkpoint Q4
+        uses: actions/download-artifact@v4
+        with:
+          name: checkpoint-SPY-2025-10-01-2025-12-31
+          path: .
+        continue-on-error: true
+
+      - name: Run backfill Q4
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          python scripts/backfill_range.py \
+            --symbol SPY --start 2025-10-01 --end 2025-12-31 \
+            --max-dte 60 --strike-low 0.9 --strike-high 1.1 \
+            --per-key-rps 0.3 --max-workers 5 \
+            --monthlies-only --trading-days-only \
+            --log-file logs/backfill-SPY-2025-10-01-2025-12-31.log
+
+      - name: Upload checkpoint Q4
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkpoint-SPY-2025-10-01-2025-12-31
+          path: .backfill_SPY_2025-10-01_2025-12-31.json
+          retention-days: 90
+          overwrite: true
+
+      - name: Upload log Q4
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: log-SPY-2025-10-01-2025-12-31-run${{ github.run_number }}
+          path: logs/backfill-SPY-2025-10-01-2025-12-31.log
+          retention-days: 30

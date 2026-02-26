@@ -209,9 +209,13 @@ with st.sidebar:
     db_min_date = datetime.date.fromisoformat(db_min)
     db_max_date = datetime.date.fromisoformat(db_max)
 
+    # Default start: 2025-01-01 if within available range, else db_min
+    preferred_start = datetime.date(2025, 1, 1)
+    default_start = preferred_start if db_min_date <= preferred_start <= db_max_date else db_min_date
+
     date_range = st.date_input(
         "Date range",
-        value=(db_min_date, db_max_date),
+        value=(default_start, db_max_date),
         min_value=db_min_date,
         max_value=db_max_date,
         format="YYYY-MM-DD",
@@ -241,7 +245,7 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 # Load data on demand
 # ---------------------------------------------------------------------------
-ROW_CAP = 25_000
+ROW_CAP = 150_000
 
 if load_clicked:
     with st.spinner(f"Loading {symbol} {start_str} → {end_str}…"):

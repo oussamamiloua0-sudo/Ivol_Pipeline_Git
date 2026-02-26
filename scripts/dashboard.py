@@ -167,14 +167,33 @@ with st.sidebar:
 
     cp_filter = st.radio("Call / Put", ["All", "C", "P"], horizontal=True)
 
+    load_clicked = st.button("▶ Load data", type="primary", use_container_width=True)
+
     st.divider()
     st.caption(f"DB range: {db_min} → {db_max}")
 
 # ---------------------------------------------------------------------------
-# Load data
+# Load data — only on explicit button click, stored in session_state
 # ---------------------------------------------------------------------------
-with st.spinner("Loading data…"):
-    df = load_data(symbol, start_str, end_str)
+ROW_CAP = 25_000
+
+if load_clicked:
+    with st.spinner("Loading data…"):
+        raw = load_data(symbol, start_str, end_str)
+    st.session_state["df"]      = raw
+    st.session_state["df_meta"] = (symbol, start_str, end_str)
+
+if "df" not in st.session_state:
+    st.info("Select your filters in the sidebar then click **▶ Load data**.")
+    st.stop()
+
+df = st.session_state["df"]
+loaded_symbol, loaded_start, loaded_end = st.session_state["df_meta"]
+
+truncated = len(df) > ROW_CAP
+if truncated:
+    df = df.head(ROW_CAP)
+    st.warning(f"Result capped at {ROW_CAP:,} rows. Narrow the date range for full data.")
 
 if df.empty:
     st.warning("No data found for the selected filters.")
@@ -216,16 +235,20 @@ with tab_data:
         st.download_button(
             "⬇️ Download CSV",
             data=df.to_csv(index=False).encode(),
-            file_name=f"{symbol}_{start_str}_{end_str}.csv",
+            file_name=f"{loaded_symbol}_{loaded_start}_{loaded_end}.csv",
             mime="text/csv",
         )
     with col_dl2:
-        st.download_button(
-            "⬇️ Download Excel",
-            data=to_excel_bytes(df),
-            file_name=f"{symbol}_{start_str}_{end_str}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
+        if st.button("⬇️ Generate Excel", key="gen_excel"):
+            st.session_state["excel_bytes"] = to_excel_bytes(df)
+        if "excel_bytes" in st.session_state:
+            st.download_button(
+                "⬇️ Download Excel",
+                data=st.session_state["excel_bytes"],
+                file_name=f"{loaded_symbol}_{loaded_start}_{loaded_end}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dl_excel",
+            )
 
 # --- Tab 2: IV Smile ---
 with tab_smile:

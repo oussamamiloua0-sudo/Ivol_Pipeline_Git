@@ -41,17 +41,19 @@ def _engine():
     return get_engine()
 
 
+CACHE_TTL = 600  # 10 minutes
+
 # ---------------------------------------------------------------------------
 # DB helpers
 # ---------------------------------------------------------------------------
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=CACHE_TTL)
 def get_symbols() -> list[str]:
     with _engine().connect() as conn:
         rows = conn.execute(text("SELECT symbol FROM dim_underlying ORDER BY symbol")).fetchall()
     return [r[0] for r in rows]
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=CACHE_TTL)
 def get_date_range(symbol: str) -> tuple[str, str]:
     with _engine().connect() as conn:
         row = conn.execute(text("""
@@ -66,7 +68,7 @@ def get_date_range(symbol: str) -> tuple[str, str]:
     return "", ""
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=CACHE_TTL)
 def get_expirations(symbol: str, start: str, end: str) -> list[str]:
     with _engine().connect() as conn:
         rows = conn.execute(text("""
@@ -81,7 +83,7 @@ def get_expirations(symbol: str, start: str, end: str) -> list[str]:
     return [str(r[0]) for r in rows]
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=CACHE_TTL)
 def get_trade_dates(symbol: str, start: str, end: str) -> list[str]:
     with _engine().connect() as conn:
         rows = conn.execute(text("""
@@ -96,7 +98,7 @@ def get_trade_dates(symbol: str, start: str, end: str) -> list[str]:
     return [str(r[0]) for r in rows]
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=CACHE_TTL)
 def load_data(symbol: str, start: str, end: str) -> pd.DataFrame:
     return fetch_export_df(_engine(), symbols=[symbol], start=start, end=end)
 
@@ -116,6 +118,11 @@ def to_excel_bytes(df: pd.DataFrame) -> bytes:
 # ---------------------------------------------------------------------------
 with st.sidebar:
     st.header("Filters")
+
+    if st.button("🔄 Refresh data", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+    st.caption("Auto-refreshes every 10 min")
 
     symbols = get_symbols()
     if not symbols:

@@ -1,0 +1,127 @@
+name: Backfill on Droplet
+
+# Triggers a backfill on the DigitalOcean droplet via SSH.
+# The actual job runs on the droplet — no 6-hour GHA limit applies.
+# If GHA times out while streaming logs, the backfill keeps running on the droplet.
+
+on:
+  workflow_dispatch:
+    inputs:
+      symbol:
+        description: 'Symbol (SPY, SPX, AAPL…)'
+        required: true
+        default: 'SPY'
+      start:
+        description: 'Start date (YYYY-MM-DD)'
+        required: true
+      end:
+        description: 'End date (YYYY-MM-DD)'
+        required: true
+      max_dte:
+        description: 'Max DTE'
+        required: false
+        default: '60'
+      strike_low:
+        description: 'Strike low multiplier (e.g. 0.85)'
+        required: false
+        default: '0.85'
+      strike_high:
+        description: 'Strike high multiplier (e.g. 1.15)'
+        required: false
+        default: '1.15'
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+
+    steps:
+
+      # ── Step 1: SSH in, write run script, start screen session ─────────────
+      - name: Launch backfill on droplet
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          SYMBOL:      ${{ github.event.inputs.symbol }}
+          START:       ${{ github.event.inputs.start }}
+          END:         ${{ github.event.inputs.end }}
+          MAX_DTE:     ${{ github.event.inputs.max_dte }}
+          STRIKE_LOW:  ${{ github.event.inputs.strike_low }}
+          STRIKE_HIGH: ${{ github.event.inputs.strike_high }}
+          RUN_ID:      ${{ github.run_id }}
+        with:
+          host:     ${{ secrets.DROPLET_HOST }}
+          username: root
+          password: ${{ secrets.DROPLET_PASSWORD }}
+          envs:     SYMBOL,START,END,MAX_DTE,STRIKE_LOW,STRIKE_HIGH,RUN_ID
+          command_timeout: 60s
+          script: |
+            SESSION="bf_${RUN_ID}"
+            LOG="/tmp/${SESSION}.log"
+
+            # Kill any stale backfill sessions
+            screen -ls 2>/dev/null | grep -oE '[0-9]+\.bf_[0-9]+' \
+              | xargs -I{} screen -S {} -X quit 2>/dev/null || true
+
+            # Write the run script (avoids shell quoting issues)
+            printf '#!/bin/bash\nset -e\ncd /opt/pipeline\ngit pull origin main --quiet\n.venv/bin/python3 -u scripts/backfill_range.py --symbol "%s" --start "%s" --end "%s" --max-dte "%s" --strike-low "%s" --strike-high "%s" --per-key-rps 0.3\n' \
+              "$SYMBOL" "$START" "$END" "$MAX_DTE" "$STRIKE_LOW" "$STRIKE_HIGH" \
+              > /tmp/${SESSION}.sh
+            chmod +x /tmp/${SESSION}.sh
+
+            # Start detached screen session — job survives even if GHA disconnects
+            screen -dmS "$SESSION" bash -c \
+              "/tmp/${SESSION}.sh >> ${LOG} 2>&1 \
+               && echo BACKFILL_COMPLETE >> ${LOG} \
+               || echo BACKFILL_FAILED  >> ${LOG}"
+
+            sleep 3
+            echo "Started screen session: $SESSION"
+            screen -ls
+
+      # ── Step 2: Stream logs back to GHA (safe to time out) ─────────────────
+      - name: Stream logs from droplet
+        env:
+          RUN_ID: ${{ github.run_id }}
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.DROPLET_HOST }}
+          username: root
+          password: ${{ secrets.DROPLET_PASSWORD }}
+          envs:     RUN_ID
+          command_timeout: 350m
+          script: |
+            SESSION="bf_${RUN_ID}"
+            LOG="/tmp/${SESSION}.log"
+
+            # Wait up to 60s for log to appear
+            for i in $(seq 30); do [ -f "$LOG" ] && break; sleep 2; done
+            [ -f "$LOG" ] || { echo "ERROR: log file not found"; exit 1; }
+
+            echo "====================================================================="
+            echo " Live log — backfill continues on droplet even if GHA times out"
+            echo "====================================================================="
+
+            OFFSET=0
+            while true; do
+              TOTAL=$(wc -l < "$LOG" 2>/dev/null || echo 0)
+
+              if [ "$TOTAL" -gt "$OFFSET" ]; then
+                sed -n "$((OFFSET+1)),${TOTAL}p" "$LOG"
+                OFFSET=$TOTAL
+
+                if grep -qE 'BACKFILL_COMPLETE|BACKFILL_FAILED' "$LOG" 2>/dev/null; then
+                  echo "====================================================================="
+                  grep -E 'BACKFILL_COMPLETE|BACKFILL_FAILED' "$LOG"
+                  exit 0
+                fi
+              fi
+
+              # Exit cleanly if screen session has ended
+              if ! screen -ls 2>/dev/null | grep -q "$SESSION"; then
+                echo "====================================================================="
+                echo "Screen session ended — check last lines above for result"
+                exit 0
+              fi
+
+              sleep 10
+            done

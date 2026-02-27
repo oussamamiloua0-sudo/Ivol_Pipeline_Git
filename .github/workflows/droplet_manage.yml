@@ -1,0 +1,64 @@
+name: Droplet — Status / Stop
+
+# Check what's running on the droplet, or kill an active backfill.
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action'
+        required: true
+        type: choice
+        options:
+          - status
+          - stop
+
+jobs:
+  manage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+
+      - name: Check status
+        if: ${{ github.event.inputs.action == 'status' }}
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.DROPLET_HOST }}
+          username: root
+          password: ${{ secrets.DROPLET_PASSWORD }}
+          command_timeout: 30s
+          script: |
+            echo "===== Screen sessions ====="
+            screen -ls || echo "(none)"
+
+            echo ""
+            echo "===== Latest backfill log (last 40 lines) ====="
+            LOG=$(ls -t /tmp/bf_*.log 2>/dev/null | head -1)
+            if [ -n "$LOG" ]; then
+              echo "File: $LOG"
+              tail -40 "$LOG"
+            else
+              echo "(no active backfill log found)"
+            fi
+
+            echo ""
+            echo "===== System memory ====="
+            free -h
+
+      - name: Stop backfill
+        if: ${{ github.event.inputs.action == 'stop' }}
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.DROPLET_HOST }}
+          username: root
+          password: ${{ secrets.DROPLET_PASSWORD }}
+          command_timeout: 30s
+          script: |
+            SESSIONS=$(screen -ls 2>/dev/null | grep -oE '[0-9]+\.bf_[0-9]+' || true)
+            if [ -n "$SESSIONS" ]; then
+              echo "$SESSIONS" | xargs -I{} screen -S {} -X quit
+              echo "Stopped: $SESSIONS"
+            else
+              echo "No active backfill session found"
+            fi

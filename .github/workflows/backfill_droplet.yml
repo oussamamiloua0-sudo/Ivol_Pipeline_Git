@@ -3,12 +3,15 @@ name: Backfill on Droplet
 # Triggers a backfill on the DigitalOcean droplet via SSH.
 # The actual job runs on the droplet — no 6-hour GHA limit applies.
 # If GHA times out while streaming logs, the backfill keeps running on the droplet.
+#
+# Inputs mirror the main "iVol Backfill" workflow for consistency.
+# Required secrets: DROPLET_HOST, DROPLET_PASSWORD
 
 on:
   workflow_dispatch:
     inputs:
       symbol:
-        description: 'Symbol (SPY, SPX, AAPL…)'
+        description: 'Symbol (e.g. SPY, SPX, AAPL)'
         required: true
         default: 'SPY'
       start:
@@ -18,17 +21,40 @@ on:
         description: 'End date (YYYY-MM-DD)'
         required: true
       max_dte:
-        description: 'Max DTE'
+        description: 'Max DTE (days to expiration)'
         required: false
         default: '60'
       strike_low:
-        description: 'Strike low multiplier (e.g. 0.85)'
+        description: 'Strike low band (fraction: 0.9 = 90%)'
         required: false
-        default: '0.85'
+        default: '0.9'
       strike_high:
-        description: 'Strike high multiplier (e.g. 1.15)'
+        description: 'Strike high band (fraction: 1.1 = 110%)'
         required: false
-        default: '1.15'
+        default: '1.1'
+      monthlies_only:
+        description: 'Monthlies-only filter (3rd Friday rule)'
+        required: false
+        default: true
+        type: boolean
+      trading_days_only:
+        description: 'NYSE calendar — skip weekends + holidays'
+        required: false
+        default: true
+        type: boolean
+      per_key_rps:
+        description: 'Per-key RPS (0.3 is safe for 5 keys)'
+        required: false
+        default: '0.3'
+      max_workers:
+        description: 'Max parallel workers'
+        required: false
+        default: '5'
+      retry_failed:
+        description: 'Retry only previously failed dates'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   backfill:
@@ -41,18 +67,23 @@ jobs:
       - name: Launch backfill on droplet
         uses: appleboy/ssh-action@v1.0.3
         env:
-          SYMBOL:      ${{ github.event.inputs.symbol }}
-          START:       ${{ github.event.inputs.start }}
-          END:         ${{ github.event.inputs.end }}
-          MAX_DTE:     ${{ github.event.inputs.max_dte }}
-          STRIKE_LOW:  ${{ github.event.inputs.strike_low }}
-          STRIKE_HIGH: ${{ github.event.inputs.strike_high }}
-          RUN_ID:      ${{ github.run_id }}
+          SYMBOL:         ${{ github.event.inputs.symbol }}
+          START:          ${{ github.event.inputs.start }}
+          END:            ${{ github.event.inputs.end }}
+          MAX_DTE:        ${{ github.event.inputs.max_dte }}
+          STRIKE_LOW:     ${{ github.event.inputs.strike_low }}
+          STRIKE_HIGH:    ${{ github.event.inputs.strike_high }}
+          MONTHLIES_ONLY: ${{ github.event.inputs.monthlies_only }}
+          TRADING_DAYS:   ${{ github.event.inputs.trading_days_only }}
+          PER_KEY_RPS:    ${{ github.event.inputs.per_key_rps }}
+          MAX_WORKERS:    ${{ github.event.inputs.max_workers }}
+          RETRY_FAILED:   ${{ github.event.inputs.retry_failed }}
+          RUN_ID:         ${{ github.run_id }}
         with:
           host:     ${{ secrets.DROPLET_HOST }}
           username: root
           password: ${{ secrets.DROPLET_PASSWORD }}
-          envs:     SYMBOL,START,END,MAX_DTE,STRIKE_LOW,STRIKE_HIGH,RUN_ID
+          envs:     SYMBOL,START,END,MAX_DTE,STRIKE_LOW,STRIKE_HIGH,MONTHLIES_ONLY,TRADING_DAYS,PER_KEY_RPS,MAX_WORKERS,RETRY_FAILED,RUN_ID
           command_timeout: 60s
           script: |
             SESSION="bf_${RUN_ID}"
@@ -62,9 +93,15 @@ jobs:
             screen -ls 2>/dev/null | grep -oE '[0-9]+\.bf_[0-9]+' \
               | xargs -I{} screen -S {} -X quit 2>/dev/null || true
 
-            # Write the run script (avoids shell quoting issues)
-            printf '#!/bin/bash\nset -e\ncd /opt/pipeline\ngit pull origin main --quiet\n.venv/bin/python3 -u scripts/backfill_range.py --symbol "%s" --start "%s" --end "%s" --max-dte "%s" --strike-low "%s" --strike-high "%s" --per-key-rps 0.3\n' \
-              "$SYMBOL" "$START" "$END" "$MAX_DTE" "$STRIKE_LOW" "$STRIKE_HIGH" \
+            # Build optional flags (evaluated on the droplet)
+            EXTRA=""
+            [ "$MONTHLIES_ONLY" = "true" ] && EXTRA="$EXTRA --monthlies-only"
+            [ "$TRADING_DAYS"   = "true" ] && EXTRA="$EXTRA --trading-days-only"
+            [ "$RETRY_FAILED"   = "true" ] && EXTRA="$EXTRA --retry-failed"
+
+            # Write the run script (avoids shell quoting issues with special chars)
+            printf '#!/bin/bash\nset -e\ncd /opt/pipeline\n.venv/bin/python3 -u scripts/backfill_range.py --symbol "%s" --start "%s" --end "%s" --max-dte "%s" --strike-low "%s" --strike-high "%s" --per-key-rps "%s" --max-workers "%s"%s\n' \
+              "$SYMBOL" "$START" "$END" "$MAX_DTE" "$STRIKE_LOW" "$STRIKE_HIGH" "$PER_KEY_RPS" "$MAX_WORKERS" "$EXTRA" \
               > /tmp/${SESSION}.sh
             chmod +x /tmp/${SESSION}.sh
 
@@ -76,6 +113,7 @@ jobs:
 
             sleep 3
             echo "Started screen session: $SESSION"
+            echo "Command: $(cat /tmp/${SESSION}.sh | tail -1)"
             screen -ls
 
       # ── Step 2: Stream logs back to GHA (safe to time out) ─────────────────

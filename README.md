@@ -1,5 +1,8 @@
 # ivolatility-data-pipeline
 
+![Backfill on Droplet](https://github.com/oussamamiloua0-sudo/Ivol_Pipeline_Git/actions/workflows/backfill_droplet.yml/badge.svg)
+![Droplet Status/Stop](https://github.com/oussamamiloua0-sudo/Ivol_Pipeline_Git/actions/workflows/droplet_manage.yml/badge.svg)
+
 Full-chain EOD equity options ingest pipeline using the iVolatility REST API.
 
 ## Purpose

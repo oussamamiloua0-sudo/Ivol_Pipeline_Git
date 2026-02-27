@@ -239,31 +239,25 @@ with st.sidebar:
     cp_filter = st.radio("Call / Put", ["All", "C", "P"], horizontal=True)
 
     st.divider()
-    load_clicked = st.button("▶ Load Data", type="primary", use_container_width=True)
+    refresh_clicked = st.button("🔄 Reload Data", type="primary", use_container_width=True)
     st.caption(f"Available: {db_min} → {db_max}")
 
 # ---------------------------------------------------------------------------
-# Load data on demand
+# Auto-load: reload whenever filters change or user hits Reload
 # ---------------------------------------------------------------------------
 ROW_CAP = 150_000
 
-if load_clicked:
+current_filters = (symbol, start_str, end_str)
+filters_changed = st.session_state.get("last_filters") != current_filters
+
+if filters_changed or refresh_clicked or "df" not in st.session_state:
     with st.spinner(f"Loading {symbol} {start_str} → {end_str}…"):
         raw = load_data(symbol, start_str, end_str)
-    st.session_state["df"]      = raw
-    st.session_state["df_meta"] = (symbol, start_str, end_str)
+    st.session_state["df"]          = raw
+    st.session_state["df_meta"]     = (symbol, start_str, end_str)
+    st.session_state["last_filters"] = current_filters
     if "excel_bytes" in st.session_state:
         del st.session_state["excel_bytes"]
-
-if "df" not in st.session_state:
-    st.markdown("""
-    <div class="landing-card">
-        <h3>Select filters and click ▶ Load Data</h3>
-        <p>Choose a symbol and date range in the sidebar, then load to explore<br>
-        the options chain, IV smile, and implied volatility over time.</p>
-    </div>
-    """, unsafe_allow_html=True)
-    st.stop()
 
 df = st.session_state["df"]
 loaded_symbol, loaded_start, loaded_end = st.session_state["df_meta"]

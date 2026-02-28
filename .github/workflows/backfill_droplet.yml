@@ -55,6 +55,11 @@ on:
         required: false
         default: false
         type: boolean
+      stream_only:
+        description: 'Stream existing backfill — skip launch, just attach to running log'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   backfill:
@@ -65,6 +70,7 @@ jobs:
 
       # ── Step 1: SSH in, write run script, start screen session ─────────────
       - name: Launch backfill on droplet
+        if: ${{ github.event.inputs.stream_only != 'true' }}
         uses: appleboy/ssh-action@v1.0.3
         env:
           SYMBOL:         ${{ github.event.inputs.symbol }}
@@ -119,24 +125,32 @@ jobs:
       # ── Step 2: Stream logs back to GHA (safe to time out) ─────────────────
       - name: Stream logs from droplet
         env:
-          RUN_ID: ${{ github.run_id }}
+          RUN_ID:       ${{ github.run_id }}
+          STREAM_ONLY:  ${{ github.event.inputs.stream_only }}
         uses: appleboy/ssh-action@v1.0.3
         with:
           host:     ${{ secrets.DROPLET_HOST }}
           username: root
           password: ${{ secrets.DROPLET_PASSWORD }}
-          envs:     RUN_ID
+          envs:     RUN_ID,STREAM_ONLY
           command_timeout: 350m
           script: |
-            SESSION="bf_${RUN_ID}"
-            LOG="/tmp/${SESSION}.log"
+            if [ "$STREAM_ONLY" = "true" ]; then
+              # Attach to whatever is already running on the droplet
+              LOG=$(ls -t /tmp/spy_*.log /tmp/bf_*.log 2>/dev/null | head -1)
+              SESSION=""
+            else
+              SESSION="bf_${RUN_ID}"
+              LOG="/tmp/${SESSION}.log"
+              # Wait up to 60s for log to appear after launch
+              for i in $(seq 30); do [ -f "$LOG" ] && break; sleep 2; done
+            fi
 
-            # Wait up to 60s for log to appear
-            for i in $(seq 30); do [ -f "$LOG" ] && break; sleep 2; done
-            [ -f "$LOG" ] || { echo "ERROR: log file not found"; exit 1; }
+            [ -f "$LOG" ] || { echo "ERROR: no active backfill log found"; exit 1; }
 
             echo "====================================================================="
-            echo " Live log — backfill continues on droplet even if GHA times out"
+            echo " Streaming: $LOG"
+            echo " Backfill continues on droplet even if GHA times out"
             echo "====================================================================="
 
             OFFSET=0
@@ -154,10 +168,10 @@ jobs:
                 fi
               fi
 
-              # Exit cleanly if screen session has ended
-              if ! screen -ls 2>/dev/null | grep -q "$SESSION"; then
+              # Exit cleanly if no backfill sessions remain
+              if ! screen -ls 2>/dev/null | grep -qE 'spy_|bf_|chain_'; then
                 echo "====================================================================="
-                echo "Screen session ended — check last lines above for result"
+                echo "All backfill sessions ended."
                 exit 0
               fi
 

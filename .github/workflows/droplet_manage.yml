@@ -34,7 +34,7 @@ jobs:
 
             echo ""
             echo "===== Latest backfill log (last 40 lines) ====="
-            LOG=$(ls -t /tmp/bf_*.log 2>/dev/null | head -1)
+            LOG=$(ls -t /tmp/spy_*.log /tmp/bf_*.log 2>/dev/null | head -1)
             if [ -n "$LOG" ]; then
               echo "File: $LOG"
               tail -40 "$LOG"

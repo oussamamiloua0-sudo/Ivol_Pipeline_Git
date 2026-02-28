@@ -17,7 +17,7 @@ on:
 jobs:
   manage:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 355
 
     steps:
 
@@ -92,7 +92,7 @@ jobs:
           password: ${{ secrets.DROPLET_PASSWORD }}
           command_timeout: 30s
           script: |
-            SESSIONS=$(screen -ls 2>/dev/null | grep -oE '[0-9]+\.bf_[0-9]+' || true)
+            SESSIONS=$(screen -ls 2>/dev/null | grep -oE '[0-9]+\.(spy_|bf_)[^ ]+' || true)
             if [ -n "$SESSIONS" ]; then
               echo "$SESSIONS" | xargs -I{} screen -S {} -X quit
               echo "Stopped: $SESSIONS"

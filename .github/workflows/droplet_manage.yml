@@ -11,6 +11,7 @@ on:
         type: choice
         options:
           - status
+          - stream
           - stop
 
 jobs:
@@ -45,6 +46,42 @@ jobs:
             echo ""
             echo "===== System memory ====="
             free -h
+
+      - name: Stream backfill log
+        if: ${{ github.event.inputs.action == 'stream' }}
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.DROPLET_HOST }}
+          username: root
+          password: ${{ secrets.DROPLET_PASSWORD }}
+          command_timeout: 350m
+          script: |
+            LOG=$(ls -t /tmp/spy_*.log /tmp/bf_*.log 2>/dev/null | head -1)
+            if [ -z "$LOG" ]; then
+              echo "No active backfill log found"
+              exit 1
+            fi
+            echo "Streaming: $LOG"
+            echo "====================================================================="
+            OFFSET=0
+            while true; do
+              TOTAL=$(wc -l < "$LOG" 2>/dev/null || echo 0)
+              if [ "$TOTAL" -gt "$OFFSET" ]; then
+                sed -n "$((OFFSET+1)),${TOTAL}p" "$LOG"
+                OFFSET=$TOTAL
+                if grep -qE 'BACKFILL_COMPLETE|BACKFILL_FAILED' "$LOG" 2>/dev/null; then
+                  echo "====================================================================="
+                  grep -E 'BACKFILL_COMPLETE|BACKFILL_FAILED' "$LOG"
+                  exit 0
+                fi
+              fi
+              if ! screen -ls 2>/dev/null | grep -qE 'spy_|bf_'; then
+                echo "====================================================================="
+                echo "All backfill sessions ended."
+                exit 0
+              fi
+              sleep 10
+            done
 
       - name: Stop backfill
         if: ${{ github.event.inputs.action == 'stop' }}

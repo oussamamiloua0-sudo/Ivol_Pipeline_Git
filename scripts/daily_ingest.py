@@ -27,8 +27,8 @@ from src.ivol.constants import BASE_URL_DEFAULT  # noqa: E402
 from src.ivol.key_pool import load_key_pool   # noqa: E402
 from src.backfill.runner import run_backfill   # noqa: E402
 
-# Default parameters tuned for large-cap options (SPX-style)
-DEFAULT_MAX_DTE     = 30
+# Default parameters — matches backfill standard settings
+DEFAULT_MAX_DTE     = 60
 DEFAULT_STRIKE_LOW  = 0.90
 DEFAULT_STRIKE_HIGH = 1.10
 DEFAULT_PER_KEY_RPS = 0.3
@@ -48,9 +48,11 @@ def main() -> None:
     ap.add_argument("--max-dte",     type=int,   default=DEFAULT_MAX_DTE,   dest="max_dte")
     ap.add_argument("--strike-low",  type=float, default=DEFAULT_STRIKE_LOW,  dest="strike_low")
     ap.add_argument("--strike-high", type=float, default=DEFAULT_STRIKE_HIGH, dest="strike_high")
-    ap.add_argument("--max-workers", type=int,   default=0, dest="max_workers")
-    ap.add_argument("--per-key-rps", type=float, default=DEFAULT_PER_KEY_RPS, dest="per_key_rps")
-    ap.add_argument("--debug",       action="store_true")
+    ap.add_argument("--max-workers",      type=int,   default=0, dest="max_workers")
+    ap.add_argument("--per-key-rps",      type=float, default=DEFAULT_PER_KEY_RPS, dest="per_key_rps")
+    ap.add_argument("--monthlies-only",   action="store_true", default=True,  dest="monthlies_only")
+    ap.add_argument("--trading-days-only",action="store_true", default=True,  dest="trading_days_only")
+    ap.add_argument("--debug",            action="store_true")
     args = ap.parse_args()
 
     _load_env()
@@ -84,6 +86,8 @@ def main() -> None:
             max_dte=args.max_dte,
             strike_low=args.strike_low,
             strike_high=args.strike_high,
+            monthlies_only=args.monthlies_only,
+            trading_days_only=args.trading_days_only,
             progress_file=progress_file,
             log_file=log_file,
             debug=args.debug,

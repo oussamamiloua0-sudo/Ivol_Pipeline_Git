@@ -293,7 +293,7 @@ def run_backfill(
                 consecutive_failures += 1
                 if consecutive_failures >= CIRCUIT_BREAKER_LIMIT:
                     logger.critical("CIRCUIT BREAKER: %d consecutive failures — halting.", consecutive_failures)
-                    break
+                    raise SystemExit(1)
                 continue
 
             elapsed = time.monotonic() - t_day
@@ -346,7 +346,7 @@ def run_backfill(
                 if consecutive_failures >= CIRCUIT_BREAKER_LIMIT:
                     logger.critical("CIRCUIT BREAKER: %d consecutive failures — halting.", consecutive_failures)
                     save_progress(progress_file, state)
-                    break
+                    raise SystemExit(1)
 
             save_progress(progress_file, state)
 

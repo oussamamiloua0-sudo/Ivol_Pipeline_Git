@@ -11,6 +11,7 @@ on:
         type: choice
         options:
           - status
+          - slack-status
           - stream
           - stop
 
@@ -46,6 +47,18 @@ jobs:
             echo ""
             echo "===== System memory ====="
             free -h
+
+      - name: Slack status
+        if: ${{ github.event.inputs.action == 'slack-status' }}
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.DROPLET_HOST }}
+          username: root
+          password: ${{ secrets.DROPLET_PASSWORD }}
+          command_timeout: 30s
+          script: |
+            cd /opt/pipeline
+            /opt/pipeline/.venv/bin/python scripts/backfill_status.py
 
       - name: Stream backfill log
         if: ${{ github.event.inputs.action == 'stream' }}

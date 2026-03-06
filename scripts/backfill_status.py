@@ -75,7 +75,7 @@ if start_date and end_date and symbol:
     if os.path.exists(cp_file):
         with open(cp_file) as f:
             cp = json.load(f)
-        done_days = sum(1 for v in cp.values() if v == "done")
+        done_days = cp.get("days_done", 0)
     # Estimate total trading days (business days * 0.97 to account for holidays)
     s = datetime.strptime(start_date, "%Y-%m-%d").date()
     e = datetime.strptime(end_date, "%Y-%m-%d").date()
@@ -89,7 +89,7 @@ mins_r = mins % 60
 time_str = f"{hrs}h {mins_r}m" if hrs else f"{mins_r}m"
 
 parts = [
-    f":bar_chart: *{symbol}*",
+    f"*{symbol}*",
     f"At: `{current_date}`",
     f"{done_days} done, ~{remaining} left",
     f"~{time_str} remaining",

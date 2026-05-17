@@ -35,6 +35,7 @@ class SimulateRequest(BaseModel):
     start: date = date(2022, 1, 1)
     end: date = date(2024, 12, 31)
     strategy: str = "cc"     # 'cc' = covered call, 'csp' = cash-secured put
+    iv_regime: str = "all"   # 'all', 'high' (>=18%), 'low' (<18%)
 
 
 @app.post("/simulate")
@@ -49,8 +50,10 @@ def simulate(req: SimulateRequest):
         raise HTTPException(400, "Date range must be at least 30 days")
     if req.strategy not in ("cc", "csp"):
         raise HTTPException(400, "Strategy must be 'cc' or 'csp'")
+    if req.iv_regime not in ("all", "high", "low"):
+        raise HTTPException(400, "iv_regime must be 'all', 'high', or 'low'")
 
-    result = run_simulation(req.symbol, req.delta, req.dte, req.start, req.end, strategy=req.strategy)
+    result = run_simulation(req.symbol, req.delta, req.dte, req.start, req.end, strategy=req.strategy, iv_regime=req.iv_regime)
     if result is None:
         raise HTTPException(404, f"No options data found for {req.symbol} in that date range")
     return result
@@ -62,6 +65,7 @@ class GridRequest(BaseModel):
     start: date = date(2022, 1, 1)
     end: date = date(2024, 12, 31)
     strategy: str = "cc"     # 'cc' = covered call, 'csp' = cash-secured put
+    iv_regime: str = "all"   # 'all', 'high' (>=18%), 'low' (<18%)
 
 
 @app.post("/grid")
@@ -72,8 +76,10 @@ def grid(req: GridRequest):
         raise HTTPException(400, "Date range must be at least 30 days")
     if req.strategy not in ("cc", "csp"):
         raise HTTPException(400, "Strategy must be 'cc' or 'csp'")
+    if req.iv_regime not in ("all", "high", "low"):
+        raise HTTPException(400, "iv_regime must be 'all', 'high', or 'low'")
 
-    result = run_grid(req.symbol, req.start, req.end, strategy=req.strategy)
+    result = run_grid(req.symbol, req.start, req.end, strategy=req.strategy, iv_regime=req.iv_regime)
     if not result or not result.get("grid"):
         raise HTTPException(404, f"No grid data found for {req.symbol} in that date range")
     return result
@@ -87,6 +93,7 @@ class WheelRequest(BaseModel):
     target_delta: float = 0.17
     target_dte: int = 45
     close_scenario: str = "exitExp"
+    iv_regime: str = "all"   # 'all', 'high' (>=18%), 'low' (<18%)
 
 
 @app.post("/wheel")
@@ -101,12 +108,15 @@ def wheel(req: WheelRequest):
         raise HTTPException(400, "Date range must be at least 30 days")
     if req.close_scenario not in ("exit25", "exit50", "exitExp"):
         raise HTTPException(400, "close_scenario must be exit25, exit50, or exitExp")
+    if req.iv_regime not in ("all", "high", "low"):
+        raise HTTPException(400, "iv_regime must be 'all', 'high', or 'low'")
 
     result = run_wheel_simulation(
         req.symbol, req.start, req.end,
         target_delta=req.target_delta,
         target_dte=req.target_dte,
         close_scenario=req.close_scenario,
+        iv_regime=req.iv_regime,
     )
     if result is None:
         raise HTTPException(404, f"No options data found for {req.symbol} in that date range")

@@ -241,7 +241,7 @@ def _yearly_pnl(trades: list) -> dict:
 
 def run_simulation(symbol: str, target_delta: float, target_dte: int,
                    start: date, end: date, min_iv: Optional[float] = None,
-                   strategy: str = 'cc'):
+                   strategy: str = 'cc', iv_regime: str = 'all'):
     """
     Run options strategy backtest.
 
@@ -253,6 +253,7 @@ def run_simulation(symbol: str, target_delta: float, target_dte: int,
         end:          Backtest end date
         min_iv:       Minimum IV to enter trade (skip low-IV months)
         strategy:     'cc' = covered call (default), 'csp' = cash-secured put
+        iv_regime:    'all' = no filter, 'high' = IV >= 18%, 'low' = IV < 18%
     """
     pairs = _monthly_entry_dates(start, end, target_dte)
     if not pairs:
@@ -282,6 +283,14 @@ def run_simulation(symbol: str, target_delta: float, target_dte: int,
         entries_df = entries_df[entries_df['iv'] >= min_iv]
         if entries_df.empty:
             return None
+
+    # Apply IV regime filter
+    if iv_regime == 'high':
+        entries_df = entries_df[entries_df['iv'] >= 0.18]
+    elif iv_regime == 'low':
+        entries_df = entries_df[entries_df['iv'] < 0.18]
+    if entries_df.empty:
+        return None
 
     option_ids = entries_df['option_id'].tolist()
     eod = _load_price_history(option_ids, start, end)
@@ -617,7 +626,7 @@ def run_simulation(symbol: str, target_delta: float, target_dte: int,
 # ── 3x3 Grid ─────────────────────────────────────────────────────────────────
 
 def run_grid(symbol: str, start: date, end: date,
-             min_iv: Optional[float] = None, strategy: str = 'cc') -> dict:
+             min_iv: Optional[float] = None, strategy: str = 'cc', iv_regime: str = 'all') -> dict:
     """
     Run all 9 delta x DTE combinations and return a grid of stats.
 
@@ -643,7 +652,7 @@ def run_grid(symbol: str, start: date, end: date,
     best   = None
 
     def _run_combo(delta, dte):
-        result = run_simulation(symbol, delta, dte, start, end, min_iv=min_iv, strategy=strategy)
+        result = run_simulation(symbol, delta, dte, start, end, min_iv=min_iv, strategy=strategy, iv_regime=iv_regime)
         if result is None:
             return None
         cell = {'delta': delta, 'dte': dte}
@@ -767,7 +776,7 @@ def _new_round(start_date_str: str) -> dict:
 
 
 def _wheel_run_put(symbol, entry_date, exp_date, target_delta, target_dte,
-                   min_iv, close_scenario, underlying_prices):
+                   min_iv, close_scenario, underlying_prices, iv_regime='all'):
     df = _find_entry_options(symbol, [(entry_date, exp_date)], target_delta, target_dte, 'P')
     if df.empty:
         return None, None
@@ -776,6 +785,13 @@ def _wheel_run_put(symbol, entry_date, exp_date, target_delta, target_dte,
         df = df[df['iv'] >= min_iv]
         if df.empty:
             return None, None
+
+    if iv_regime == 'high':
+        df = df[df['iv'] >= 0.18]
+    elif iv_regime == 'low':
+        df = df[df['iv'] < 0.18]
+    if df.empty:
+        return None, None
 
     row     = df.iloc[0]
     oid     = int(row['option_id'])
@@ -820,7 +836,7 @@ def _wheel_run_put(symbol, entry_date, exp_date, target_delta, target_dte,
 
 
 def _wheel_run_call(symbol, entry_date, exp_date, target_delta, target_dte,
-                    min_iv, close_scenario, underlying_prices, cost_basis):
+                    min_iv, close_scenario, underlying_prices, cost_basis, iv_regime='all'):
     df = _find_entry_options(symbol, [(entry_date, exp_date)], target_delta, target_dte, 'C')
     if df.empty:
         return None, None
@@ -828,6 +844,10 @@ def _wheel_run_call(symbol, entry_date, exp_date, target_delta, target_dte,
     sellable = df[df['strike'] >= cost_basis]
     if min_iv is not None and min_iv > 0 and not sellable.empty:
         sellable = sellable[sellable['iv'] >= min_iv]
+    if iv_regime == 'high' and not sellable.empty:
+        sellable = sellable[sellable['iv'] >= 0.18]
+    elif iv_regime == 'low' and not sellable.empty:
+        sellable = sellable[sellable['iv'] < 0.18]
     if sellable.empty:
         return None, {'skipped': True}
 
@@ -870,7 +890,8 @@ def _wheel_run_call(symbol, entry_date, exp_date, target_delta, target_dte,
 def run_wheel_simulation(symbol: str, start: date, end: date,
                          target_delta: float = 0.17, target_dte: int = 45,
                          min_iv: Optional[float] = None,
-                         close_scenario: str = 'exitExp') -> Optional[dict]:
+                         close_scenario: str = 'exitExp',
+                         iv_regime: str = 'all') -> Optional[dict]:
     """
     Wheel strategy backtest: sell CSP → if assigned switch to CC with cost-basis-protective
     rule → if called away resume selling puts.
@@ -906,7 +927,7 @@ def run_wheel_simulation(symbol: str, start: date, end: date,
         if phase == 'PUT':
             close_dict, leg = _wheel_run_put(
                 symbol, entry_date, exp_date, target_delta, target_dte,
-                min_iv, close_scenario, underlying_prices,
+                min_iv, close_scenario, underlying_prices, iv_regime,
             )
             if leg is None:
                 continue
@@ -928,7 +949,7 @@ def run_wheel_simulation(symbol: str, start: date, end: date,
         else:  # CALL phase
             close_dict, leg = _wheel_run_call(
                 symbol, entry_date, exp_date, target_delta, target_dte,
-                min_iv, close_scenario, underlying_prices, cost_basis,
+                min_iv, close_scenario, underlying_prices, cost_basis, iv_regime,
             )
 
             if leg is None or leg.get('skipped') is True:

@@ -23,20 +23,27 @@ def fetch_rawiv(
     *,
     key_pool: KeyPool,
     base_url: str,
-    option_id: int,
+    option_id: int | None,
     date: str,
     region: str,
+    occ_symbol: str | None = None,
     timeout: int = 60,
     poll_delay: float = 2.0,
     max_polls: int = 5,
 ) -> tuple[dict | None, str | None]:
-    """Fetch raw-iv for one optionId.  Designed for concurrent worker threads.
+    """Fetch raw-iv for one contract.  Designed for concurrent worker threads.
+
+    Pass option_id for 2018+ data (real iVol ID).
+    Pass occ_symbol for pre-2018 data (e.g. 'IWM   180316C00150000').
+    option_id takes precedence if both are provided.
 
     Returns:
         (row_dict, None)    — success with data
         (None, None)        — success, 0 rows (no data for this contract/date)
         (None, error_str)   — failed after all retries
     """
+    if option_id is None and occ_symbol is None:
+        return None, "fetch_rawiv: both option_id and occ_symbol are None"
     session  = _thread_session()
     last_err: str | None = None
 
@@ -46,11 +53,16 @@ def fetch_rawiv(
 
         api_key = key_pool.acquire()
 
+        params: dict = {"apiKey": api_key, "from": date, "to": date, "region": region}
+        if option_id is not None:
+            params["optionId"] = option_id
+        else:
+            params["symbol"] = occ_symbol
+
         try:
             r = session.get(
                 f"{base_url}{RAWIV_PATH}",
-                params={"apiKey": api_key, "optionId": option_id,
-                        "from": date, "to": date, "region": region},
+                params=params,
                 timeout=timeout,
             )
         except (requests.Timeout, requests.ConnectionError) as exc:

@@ -19,6 +19,17 @@ from src.ingest.writer import bulk_upsert, chunked, coerce_date, ensure_underlyi
 from src.ivol.constants import BASE_URL_DEFAULT, BULK_CHUNK_SIZE
 from src.ivol.key_pool import KeyPool, load_key_pool
 
+import hashlib
+
+
+def _synthetic_option_id(occ_symbol: str) -> int:
+    """Deterministic negative BIGINT for pre-2018 contracts (no real iVol optionId).
+    Negative range never clashes with real iVol IDs (all positive).
+    Same OCC symbol always produces the same ID — safe to re-run.
+    """
+    h = int(hashlib.md5(occ_symbol.encode()).hexdigest()[:15], 16)
+    return -(h % (10 ** 15))
+
 
 def run_chain_for_date(
     *,
@@ -98,11 +109,25 @@ def run_chain_for_date(
 
         seen: set[int] = set()
         all_contracts: list[dict] = []
+        synthetic_id_to_occ: dict[int, str] = {}   # pre-2018: synthetic_id → OCC symbol
+
         for row in calls_rows + puts_rows:
             oid = row.get("optionId") or row.get("option_id") or row.get("id")
             if oid is None:
-                continue
-            oid = int(oid)
+                # Pre-2018: no optionId — generate synthetic ID from OCC symbol
+                occ = (
+                    row.get("OptionSymbol")
+                    or row.get("optionSymbol")
+                    or row.get("option_symbol")
+                    or row.get("option symbol")
+                )
+                if not occ:
+                    continue
+                oid = _synthetic_option_id(str(occ))
+                row = {**row, "optionId": oid}
+                synthetic_id_to_occ[oid] = str(occ)
+            else:
+                oid = int(oid)
             if oid in seen:
                 continue
             seen.add(oid)
@@ -160,7 +185,8 @@ def run_chain_for_date(
                     fetch_rawiv,
                     key_pool=key_pool,
                     base_url=base_url,
-                    option_id=int(c["optionId"]),
+                    option_id=int(c["optionId"]) if int(c["optionId"]) > 0 else None,
+                    occ_symbol=synthetic_id_to_occ.get(int(c["optionId"])),
                     date=date,
                     region=region,
                 ): c
@@ -188,7 +214,7 @@ def run_chain_for_date(
         fact_rows:         list[dict] = []
 
         for contract, raw, err in fetch_results:
-            option_id  = int(contract["optionId"])
+            option_id  = int(contract["optionId"])  # real (positive) or synthetic (negative)
             exp_val    = coerce_date(contract.get("expirationDate"))
             strike_val = contract.get("strike")
             cp_val     = contract.get("callPut") or contract.get("Call/Put")

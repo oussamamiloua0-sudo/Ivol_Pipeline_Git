@@ -38,6 +38,21 @@ nearest_option_*.xlsx
 
 # IDE
 .idea/
+.vscode/
+*.code-workspace
+
+# Streamlit (not used)
+.streamlit/
+
+# Local planning docs
+*.docx
+project_graph.*
+api_test.log
+exports/
+make_docx.py
+short_strangle_visual_guide.md
+PROJECT_SCHEMA.*
+api/chain_*.py
 
 # Nested clone (ignore)
 Ivol_Pipeline_Git/

@@ -1,9 +1,0 @@
-{
-    "recommendations": [
-        "cweijan.vscode-mysql-client2",
-        "ms-python.python",
-        "ms-python.vscode-pylance",
-        "ms-python.debugpy",
-        "ms-python.black-formatter"
-    ]
-}
